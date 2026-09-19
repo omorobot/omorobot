@@ -8,7 +8,6 @@
   <license>Apache-2.0</license>
 
   <exec_depend>geometry_msgs</exec_depend>
-  <exec_depend>launch</exec_depend>
   <exec_depend>rclpy</exec_depend>
 
   <export>
