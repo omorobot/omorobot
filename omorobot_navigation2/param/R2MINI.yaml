@@ -132,8 +132,8 @@ local_costmap:
       rolling_window: true
       width: 3
       height: 3
-      resolution: 0.05
-      robot_radius: 0.2 # r2mini
+      resolution: 0.025 # r2mini
+      robot_radius: 0.17 # r2mini
       plugins: ["voxel_layer", "inflation_layer"]
       voxel_layer:
         plugin: "nav2_costmap_2d::VoxelLayer"
@@ -157,8 +157,8 @@ local_costmap:
           obstacle_min_range: 0.0
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 3.0
-        inflation_radius: 0.35 # r2mini
+        cost_scaling_factor: 5.0 # r2mini
+        inflation_radius: 0.25 # r2mini
       always_send_full_costmap: True
 
 global_costmap:
@@ -169,7 +169,7 @@ global_costmap:
       publish_frequency: 1.0
       global_frame: map
       robot_base_frame: base_link
-      robot_radius: 0.2 # r2mini
+      robot_radius: 0.17 # r2mini
       resolution: 0.05
       track_unknown_space: true
       plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
@@ -192,8 +192,8 @@ global_costmap:
           obstacle_min_range: 0.0
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 3.0
-        inflation_radius: 0.35 # r2mini
+        cost_scaling_factor: 5.0 # r2mini
+        inflation_radius: 0.25 # r2mini
       always_send_full_costmap: True
 
 map_server:
