@@ -1,6 +1,7 @@
 import logging
 import os
 import signal
+import sys
 import threading
 import time
 
@@ -13,12 +14,28 @@ from werkzeug.serving import make_server
 from .job_runner import JobError, JobRunner, validate
 from .orchestrator import OperationError, Orchestrator
 from .ros_bridge import STEP_ANG_VEL, STEP_LIN_VEL, RosBridge
-from .storage import JobStore, MapStore, SettingsStore, StorageError, check_name
+from .storage import JobStore, MapStore, SettingsStore, StorageError, check_domain_id, check_name, read_domain_id, write_domain_id
 
 LIVE_MAP = '__live__'       # the map in the making (cartographer) in place of a saved map name
 
 
-def create_app(bridge, orchestrator, runner, maps, jobs, settings, web_dir):
+def current_domain_id():
+    """ROS_DOMAIN_ID of this process, rclpy took it when it started."""
+    try:
+        return int(os.environ.get('ROS_DOMAIN_ID') or 0)
+    except ValueError:
+        return 0
+
+
+def restart_process(domain_id):
+    """Start this web server again in place (same pid for ros2 launch) with the ROS_DOMAIN_ID."""
+    os.environ['ROS_DOMAIN_ID'] = str(domain_id)
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os.execv(sys.executable, [sys.executable] + sys.argv)
+
+
+def create_app(bridge, orchestrator, runner, maps, jobs, settings, web_dir, data_dir, restart):
     app = Flask(__name__, static_folder=None)
     app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
     app.config['MAX_CONTENT_LENGTH'] = 64 * 1024 * 1024
@@ -67,6 +84,7 @@ def create_app(bridge, orchestrator, runner, maps, jobs, settings, web_dir):
             'time': time.time(),
             'mode': orchestrator.mode(),
             'sim': orchestrator.sim,
+            'domain_id': current_domain_id(),
             'robot': bridge.robot_state(),
             'processes': orchestrator.status(),
             'map': bridge.map_info(),
@@ -92,6 +110,17 @@ def create_app(bridge, orchestrator, runner, maps, jobs, settings, web_dir):
         if request.method == 'PUT':
             return ok(settings=settings.update(body()))
         return ok(settings=settings.get())
+
+    @app.route('/api/system/domain_id', methods=['POST'])
+    def system_domain_id():
+        """The web server and everything it starts move to the ROS_DOMAIN_ID, the server starts again."""
+        domain_id = write_domain_id(data_dir, check_domain_id(body().get('domain_id')))
+        if domain_id == current_domain_id():
+            return ok(domain_id=domain_id, restart=False)
+        bridge.get_logger().info(f'ROS_DOMAIN_ID {current_domain_id()} -> {domain_id}, the web server starts again')
+        # the answer goes out first
+        threading.Timer(0.3, restart, args=(domain_id,)).start()
+        return ok(domain_id=domain_id, restart=True)
 
     # ------------------------------------------------------------------ teleop
     @app.route('/api/teleop', methods=['POST'])
@@ -344,6 +373,13 @@ def main(args=None):
     sim = bridge.get_parameter('sim').value
     os.makedirs(data_dir, exist_ok=True)
 
+    # the ROS_DOMAIN_ID set in the web ui wins over the environment, rclpy takes it only at the start
+    saved_domain_id = read_domain_id(data_dir)
+    if saved_domain_id is not None and saved_domain_id != current_domain_id():
+        bridge.get_logger().info(f'ROS_DOMAIN_ID {saved_domain_id} of {data_dir} in place of {current_domain_id()}')
+        rclpy.shutdown()
+        restart_process(saved_domain_id)
+
     maps = MapStore(data_dir)
     jobs = JobStore(data_dir)
     # the lowest speed of the robot model is the default of the virtual keyboard
@@ -364,12 +400,18 @@ def main(args=None):
     spin_thread = threading.Thread(target=spin, daemon=True)
     spin_thread.start()
 
+    restart_domain_id = []
+
+    def restart(domain_id):
+        restart_domain_id.append(domain_id)
+        server.shutdown()
+
     web_dir = os.path.join(get_package_share_directory('omorobot_web'), 'web')
-    app = create_app(bridge, orchestrator, runner, maps, jobs, settings, web_dir)
+    app = create_app(bridge, orchestrator, runner, maps, jobs, settings, web_dir, data_dir, restart)
     logging.getLogger('werkzeug').setLevel(logging.WARNING)
     server = make_server(host, port, app, threaded=True)
     bridge.get_logger().info(f'data directory: {data_dir}')
-    bridge.get_logger().info(f'web ui: http://{host}:{port}' + (' (simulation)' if sim else ''))
+    bridge.get_logger().info(f'web ui: http://{host}:{port}, ROS_DOMAIN_ID {current_domain_id()}' + (' (simulation)' if sim else ''))
 
     def request_shutdown(signum, frame):
         # shutdown() must not run in the thread that serves
@@ -390,6 +432,9 @@ def main(args=None):
         bridge.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
+        if restart_domain_id:
+            server.server_close()
+            restart_process(restart_domain_id[-1])
 
 
 if __name__ == '__main__':

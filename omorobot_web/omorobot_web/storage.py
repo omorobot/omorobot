@@ -447,6 +447,38 @@ def count_steps(steps):
     return total
 
 
+DOMAIN_ID_FILE = 'ros_domain_id'      # one number, ~/.bashrc reads the file of the default data directory
+DOMAIN_ID_MAX = 101                   # highest id that is safe on linux
+
+
+def check_domain_id(value):
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        raise StorageError(f'ROS Domain ID는 0~{DOMAIN_ID_MAX} 사이의 숫자로 입력하세요.')
+    if isinstance(value, float) and value != number or not 0 <= number <= DOMAIN_ID_MAX:
+        raise StorageError(f'ROS Domain ID는 0~{DOMAIN_ID_MAX} 사이의 숫자로 입력하세요.')
+    return number
+
+
+def read_domain_id(root):
+    """ROS_DOMAIN_ID set in the web ui, None: not set."""
+    try:
+        with open(os.path.join(root, DOMAIN_ID_FILE), 'r', encoding='utf-8') as f:
+            return check_domain_id(f.read().strip())
+    except (OSError, StorageError):
+        return None
+
+
+def write_domain_id(root, value):
+    number = check_domain_id(value)
+    path = os.path.join(root, DOMAIN_ID_FILE)
+    with open(f'{path}.tmp', 'w', encoding='utf-8') as f:
+        f.write(f'{number}\n')
+    os.replace(f'{path}.tmp', path)
+    return number
+
+
 class SettingsStore:
     def __init__(self, root, teleop=None):
         """teleop: defaults of the robot model in place of DEFAULT_SETTINGS"""

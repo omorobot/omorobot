@@ -1,6 +1,6 @@
 // 시스템: processes started by the web server, logs and io
 import { api, store } from '../api.js';
-import { h, clear, button, toast, formatTime } from '../ui.js';
+import { h, clear, button, toast, formatTime, confirmDialog, field } from '../ui.js';
 import { IoPanel, LogView } from '../components.js';
 
 const PROCESSES = [
@@ -41,12 +41,18 @@ function mount(root) {
   const io = new IoPanel();
   const labelEditor = h('div.stack');
   const info = h('dl.kv');
+  // robots on the same network need different ids, or their topics mix
+  let domainId = null;
+  const domainInput = h('input', { type: 'number', min: 0, max: 101, step: 1, 'aria-label': 'ROS Domain ID' });
+  const domainButton = button('설정', { iconName: 'check', onclick: setDomainId });
   root.appendChild(h('div.stack', { style: 'gap:14px' },
     h('div.system-grid',
       processCard,
       h('div.card.stack', h('h3', '디지털 입출력 (I/O)'), io.element,
         h('p.muted.small-text', '출력은 ROS 토픽 /io/digital_out, 입력은 /io/digital_in (std_msgs/UInt8MultiArray) 으로 연결됩니다.')),
-      h('div.card.stack', h('h3', '정보'), info)),
+      h('div.card.stack', h('h3', '정보'), info,
+        h('div.inline', { style: 'align-items:flex-end' }, h('div.grow', field('ROS Domain ID (0~101)', domainInput)), domainButton),
+        h('p.muted.small-text', '같은 네트워크의 로봇마다 다른 숫자를 지정하세요. 설정하면 실행 중인 프로세스를 종료하고 웹 서버가 다시 시작됩니다. 새로 여는 터미널에도 같은 값이 적용됩니다.'))),
     h('div.card', h('h3', '로그'), logTabs, log.element),
     h('div.card.stack', h('h3', 'I/O 이름'), h('p.muted.small-text', 'Job 편집과 I/O 패널에 표시되는 채널 이름입니다.'), labelEditor)));
   loadLabels();
@@ -54,6 +60,18 @@ function mount(root) {
   async function act(name, action) {
     await api.post(`/api/process/${name}/${action}`);
     await store.refresh();
+  }
+
+  async function setDomainId() {
+    const value = Number(domainInput.value);
+    if (domainInput.value.trim() === '' || !Number.isInteger(value) || value < 0 || value > 101) throw new Error('ROS Domain ID는 0~101 사이의 숫자로 입력하세요.');
+    if (value !== domainId) {
+      const yes = await confirmDialog('ROS Domain ID 설정',
+        `ROS Domain ID를 ${domainId} 에서 ${value} (으)로 바꿉니다. 실행 중인 bringup, 매핑, 내비게이션, Job이 종료되고 웹 서버가 다시 시작됩니다. 계속할까요?`, { confirm: '설정' });
+      if (!yes) return;
+    }
+    const { restart } = await api.post('/api/system/domain_id', { domain_id: value });
+    toast(restart ? '웹 서버를 다시 시작합니다. 잠시 후 자동으로 연결됩니다.' : `ROS Domain ID ${value} 을(를) 저장했습니다.`, 'ok');
   }
 
   async function loadLabels() {
@@ -114,7 +132,12 @@ function mount(root) {
       ['로봇 연결', state.robot.connected ? '연결됨 (odom 수신 중)' : '연결 안 됨'],
       ['최대 속도', `${state.robot.limits.lin} m/s, ${state.robot.limits.ang} rad/s`],
       ['현재 맵', state.map_name || '-'],
+      ['ROS Domain ID', String(state.domain_id)],
     ];
+    if (state.domain_id !== domainId) {
+      domainId = state.domain_id;
+      domainInput.value = domainId;
+    }
     const signature = JSON.stringify(entries);
     if (info.dataset.signature !== signature) {
       info.dataset.signature = signature;
