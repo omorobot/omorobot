@@ -9,9 +9,11 @@ from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped, Twist
 from nav2_msgs.action import NavigateThroughPoses, NavigateToPose
 from nav2_msgs.srv import LoadMap
 from nav_msgs.msg import OccupancyGrid, Path
+from rcl_interfaces.srv import SetParameters
 from rclpy.action import ActionClient
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.node import Node
+from rclpy.parameter import Parameter
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
 from rclpy.time import Time
 from sensor_msgs.msg import LaserScan
@@ -22,14 +24,21 @@ from tf2_ros import TransformException
 from .storage import grid_to_gray, gray_to_png
 from .tf_reader import TfReader
 
-ROBOT_MODEL = os.getenv('ROBOT_MODEL', 'R2MINI')
+NO_MODEL = 'NO MODEL'
+ROBOT_MODEL = os.getenv('ROBOT_MODEL') or NO_MODEL
 
-if ROBOT_MODEL == 'R2MINI':
+# same values as omorobot_teleop/teleop_keyboard.py
+# without ROBOT_MODEL the other packages run as R2MINI, the lower speeds
+if ROBOT_MODEL in ('R2MINI', NO_MODEL):
     MAX_LIN_VEL = 0.3   # 0.3m/s
     MAX_ANG_VEL = 1.0   # 1.0rad/s
+    STEP_LIN_VEL = 0.05 # 0.05m/s step
+    STEP_ANG_VEL = 0.1  # 0.1rad/s step
 else: # R2 etc
     MAX_LIN_VEL = 0.6   # 0.6m/s
     MAX_ANG_VEL = 1.0   # 1.0rad/s
+    STEP_LIN_VEL = 0.1  # 0.1m/s step
+    STEP_ANG_VEL = 0.1  # 0.1rad/s step
 
 BASE_FRAME = 'base_footprint'
 TELEOP_RATE = 20.0          # Hz
@@ -41,6 +50,7 @@ MAP_TF_STALE_SEC = 3.0
 NAV_CHECK_TIMEOUT = 4.0
 MAX_SCAN_POINTS = 360
 MAX_PATH_POINTS = 200
+MAP_SERVER_NODE = 'map_server'      # publishes the saved map on the topic of the map in the making
 
 NAV_STATUS = {
     GoalStatus.STATUS_SUCCEEDED: 'succeeded',
@@ -84,8 +94,10 @@ def normalize(angle):
 class NavTask:
     """One navigation goal sent to Nav2."""
 
-    def __init__(self, poses):
+    def __init__(self, poses, tolerance=None):
         self.poses = poses
+        self.tolerance = tolerance  # {'xy', 'yaw', 'controller'} of the goal, None: not set by the web server
+        self.adjusted = False       # the tolerance of the point was out of the range of the navigation
         self.status = 'pending'     # pending, active, succeeded, aborted, canceled, rejected, failed
         self.message = ''
         self.distance_remaining = None
@@ -110,6 +122,7 @@ class NavTask:
             'goal': {'x': x, 'y': y, 'yaw': yaw},
             'via': [{'x': p[0], 'y': p[1], 'yaw': p[2]} for p in self.poses[:-1]],
             'distance_remaining': self.distance_remaining,
+            'tolerance': self.tolerance,
         }
 
 
@@ -172,6 +185,7 @@ class RosBridge(Node):
         self.nav_through_poses = ActionClient(self, NavigateThroughPoses, 'navigate_through_poses', callback_group=self.group)
         self.cli_nav_active = self.create_client(Trigger, 'lifecycle_manager_navigation/is_active', callback_group=self.group)
         self.cli_load_map = self.create_client(LoadMap, 'map_server/load_map', callback_group=self.group)
+        self.cli_controller_params = self.create_client(SetParameters, 'controller_server/set_parameters', callback_group=self.group)
 
         self.create_timer(1.0 / TELEOP_RATE, self._teleop_tick, callback_group=self.group)
         self.create_timer(0.1, self._state_tick, callback_group=self.group)
@@ -180,6 +194,10 @@ class RosBridge(Node):
 
     # ------------------------------------------------------------------ callbacks
     def _map_callback(self, msg):
+        # the live map is the map of the mapping only, navigation shows the saved map
+        publishers = {info.node_name for info in self.get_publishers_info_by_topic(self.resolve_topic_name('map'))}
+        if publishers and publishers <= {MAP_SERVER_NODE}:
+            return
         with self._lock:
             self._map_msg = msg
             self._map_version += 1
@@ -288,6 +306,7 @@ class RosBridge(Node):
             'velocity': {'lin': round(self._velocity[0], 3), 'ang': round(self._velocity[1], 3)},
             'model': ROBOT_MODEL,
             'limits': {'lin': MAX_LIN_VEL, 'ang': MAX_ANG_VEL},
+            'steps': {'lin': STEP_LIN_VEL, 'ang': STEP_ANG_VEL},
         }
 
     def scan_points(self):
@@ -396,7 +415,8 @@ class RosBridge(Node):
         with self._teleop_lock:
             self._teleop_target = (lin, ang)
             self._teleop_stamp = time.monotonic()
-            if lin != 0.0 or ang != 0.0:
+            # zero is a command too, it is published as long as the virtual keyboard sends it
+            if lin != 0.0 or ang != 0.0 or not self._nav_busy():
                 self._teleop_active = True
                 self._teleop_zero_count = 0
 
@@ -416,20 +436,26 @@ class RosBridge(Node):
         with self._teleop_lock:
             if not self._teleop_active:
                 return
-            if time.monotonic() - self._teleop_stamp > TELEOP_TIMEOUT:
+            expired = time.monotonic() - self._teleop_stamp > TELEOP_TIMEOUT
+            if expired:
                 self._teleop_target = (0.0, 0.0)
             target = self._teleop_target
             lin = self._ramp(self._teleop_current[0], target[0], TELEOP_LIN_ACCEL / TELEOP_RATE)
             ang = self._ramp(self._teleop_current[1], target[1], TELEOP_ANG_ACCEL / TELEOP_RATE)
             self._teleop_current = (lin, ang)
-            if lin == 0.0 and ang == 0.0 and target == (0.0, 0.0):
+            if lin == 0.0 and ang == 0.0 and target == (0.0, 0.0) and (expired or self._nav_busy()):
+                # the virtual keyboard was closed or nav2 drives: go silent so that nav2 owns cmd_vel
                 self._teleop_zero_count += 1
                 if self._teleop_zero_count >= 5:
-                    self._teleop_active = False     # go silent so that nav2 owns cmd_vel
+                    self._teleop_active = False
         twist = Twist()
         twist.linear.x = lin
         twist.angular.z = ang
         self.pub_cmd_vel.publish(twist)
+
+    def _nav_busy(self):
+        task = self._nav_task
+        return task is not None and not task.done
 
     @staticmethod
     def _ramp(current, target, step):
@@ -498,10 +524,34 @@ class RosBridge(Node):
         msg.pose.orientation.z, msg.pose.orientation.w = yaw_to_quaternion(float(pose[2]))
         return msg
 
-    def navigate(self, poses):
-        """Send the robot through poses [(x, y, yaw), ...], the last one is the goal."""
+    def set_goal_tolerance(self, goal_checker, xy, yaw, timeout=3.0):
+        """Tolerance of the goal checker of the controller_server for the goals to come."""
+        if not self.cli_controller_params.service_is_ready():
+            return False
+        request = SetParameters.Request()
+        request.parameters = [
+            Parameter(f'{goal_checker}.xy_goal_tolerance', Parameter.Type.DOUBLE, float(xy)).to_parameter_msg(),
+            Parameter(f'{goal_checker}.yaw_goal_tolerance', Parameter.Type.DOUBLE, float(yaw)).to_parameter_msg(),
+        ]
+        done = threading.Event()
+        future = self.cli_controller_params.call_async(request)
+        future.add_done_callback(lambda _: done.set())
+        if not done.wait(timeout):
+            self.cli_controller_params.remove_pending_request(future)
+            return False
+        try:
+            return all(result.successful for result in future.result().results)
+        except Exception:
+            return False
+
+    def navigate(self, poses, behavior_tree='', tolerance=None):
+        """Send the robot through poses [(x, y, yaw), ...], the last one is the goal.
+
+        behavior_tree: file of the behavior tree in place of the default one
+        tolerance: what set_goal_tolerance() was called with, kept with the task
+        """
         self.cancel_navigation(wait=3.0)
-        task = NavTask([tuple(float(v) for v in pose) for pose in poses])
+        task = NavTask([tuple(float(v) for v in pose) for pose in poses], tolerance)
         self._nav_task = task
         if len(task.poses) == 1:
             client = self.nav_to_pose
@@ -511,6 +561,7 @@ class RosBridge(Node):
             client = self.nav_through_poses
             goal = NavigateThroughPoses.Goal()
             goal.poses = [self._pose_stamped(pose) for pose in task.poses]
+        goal.behavior_tree = behavior_tree
         if not client.server_is_ready():
             task.finish('failed', '내비게이션이 실행 중이 아닙니다.')
             return task

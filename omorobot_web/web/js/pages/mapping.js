@@ -8,8 +8,9 @@ function mount(root) {
   const frame = h('div.map-frame');
   const modeBadge = h('span.badge', '대기');
   const sizeText = h('span.muted.small-text');
+  const resetButton = button('맵 초기화', { iconName: 'refresh', small: true, title: '화면의 맵을 지우고 처음부터 다시 시작', onclick: reset });
   frame.appendChild(h('div.map-toolbar', modeBadge, sizeText,
-    h('span.right.muted.small-text', '드래그: 이동 · 휠: 확대/축소')));
+    h('span.right.muted.small-text', '드래그: 이동 · 휠: 확대/축소'), resetButton));
   const map = new RobotMap(frame);
   map.setMap(LIVE_MAP);
 
@@ -106,6 +107,24 @@ function mount(root) {
     await store.refresh();
   }
 
+  async function reset() {
+    const mapping = mode === 'mapping';
+    let message = mapping
+      ? '지금까지 만든 맵을 버리고 로봇의 현재 위치에서 매핑을 처음부터 다시 시작합니다.'
+      : '화면의 맵과 등록한 포인트를 지웁니다.';
+    if (canSave && !saved.textContent) message += ' 저장하지 않은 맵은 되돌릴 수 없습니다.';
+    else message += ' 저장한 맵은 그대로 남습니다.';
+    const yes = await confirmDialog('맵 초기화', message, { confirm: '초기화', danger: true });
+    if (!yes) return;
+    if (mapping) teleop.stop();
+    await api.post('/api/mapping/reset');
+    saved.textContent = '';
+    map.view.fitted = false;
+    toast(mapping ? '맵을 초기화하고 매핑을 다시 시작했습니다.' : '맵을 초기화했습니다.', 'ok');
+    await loadPoints();
+    await store.refresh();
+  }
+
   async function save() {
     const name = nameInput.value.trim();
     if (!name) {
@@ -136,7 +155,11 @@ function mount(root) {
   }
 
   function onState(state) {
-    const localized = map.update(state, state.mode === 'mapping' ? '맵 수신 대기 중…' : '"매핑 시작"을 누르면 이곳에 맵이 그려집니다.');
+    const empty = {
+      mapping: '맵 수신 대기 중…',
+      navigation: '내비게이션 실행 중입니다. 이 화면에는 매핑으로 만든 맵만 표시됩니다.',
+    }[state.mode] || '"매핑 시작"을 누르면 이곳에 맵이 그려집니다.';
+    const localized = map.update(state, empty);
     if (state.mode !== mode) {
       mode = state.mode;
       modeBadge.textContent = { idle: '대기', mapping: '매핑 중', navigation: '내비게이션 실행 중' }[mode];
@@ -147,6 +170,7 @@ function mount(root) {
     stopButton.disabled = mode !== 'mapping' || external;
     canSave = state.map.available && mode !== 'navigation';
     saveButton.disabled = !canSave;
+    resetButton.disabled = mode === 'navigation' || external || !(state.map.available || mode === 'mapping');
     addPointButton.disabled = !(mode === 'mapping' && localized);
     sizeText.textContent = state.map.available
       ? `${(state.map.width * state.map.resolution).toFixed(1)} m × ${(state.map.height * state.map.resolution).toFixed(1)} m · 해상도 ${state.map.resolution} m`

@@ -542,7 +542,7 @@ function mount(root) {
     const options = points.map((point) => [point.id, `${point.name} · ${pointTypeLabel(point.type)}`]);
     if (!options.length) {
       return h('div.notice', job.map
-        ? `맵 "${job.map}" 에 등록된 포인트가 없습니다. Mapping > 위치 포인트 메뉴에서 포인트를 먼저 만드세요.`
+        ? `맵 "${job.map}" 에 등록된 포인트가 없습니다. Navigation > 위치 포인트 메뉴에서 포인트를 먼저 만드세요.`
         : '먼저 "사용할 맵"을 선택하세요.');
     }
     const target = select(pointName(step.point) ? options : [['', '(선택)'], ...options], step.point, (next) => edit(() => { step.point = next; }, { form: true }));

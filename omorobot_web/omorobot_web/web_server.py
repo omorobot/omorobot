@@ -12,7 +12,7 @@ from werkzeug.serving import make_server
 
 from .job_runner import JobError, JobRunner, validate
 from .orchestrator import OperationError, Orchestrator
-from .ros_bridge import RosBridge
+from .ros_bridge import STEP_ANG_VEL, STEP_LIN_VEL, RosBridge
 from .storage import JobStore, MapStore, SettingsStore, StorageError, check_name
 
 LIVE_MAP = '__live__'       # the map in the making (cartographer) in place of a saved map name
@@ -71,7 +71,7 @@ def create_app(bridge, orchestrator, runner, maps, jobs, settings, web_dir):
             'processes': orchestrator.status(),
             'map': bridge.map_info(),
             'map_name': bridge.map_name,
-            'nav': {**bridge.nav_state(), 'map': orchestrator.nav_map},
+            'nav': {**bridge.nav_state(), 'map': orchestrator.nav_map, 'tolerance': orchestrator.tolerance.as_dict()},
             'job': runner.status(),
             'io': bridge.io_state(),
             'teleop': bridge.teleop_state(),
@@ -97,9 +97,12 @@ def create_app(bridge, orchestrator, runner, maps, jobs, settings, web_dir):
     @app.route('/api/teleop', methods=['POST'])
     def teleop():
         data = body()
+        lin, ang = float(data.get('lin', 0.0)), float(data.get('ang', 0.0))
         if runner.state == 'running':
+            if lin == 0.0 and ang == 0.0:
+                return ok()     # the open virtual keyboard keeps sending zero
             raise OperationError('Job 실행 중에는 수동 조작을 할 수 없습니다. Job을 일시 정지 또는 정지하세요.')
-        bridge.set_teleop(float(data.get('lin', 0.0)), float(data.get('ang', 0.0)))
+        bridge.set_teleop(lin, ang)
         return ok()
 
     @app.route('/api/teleop/stop', methods=['POST'])
@@ -138,6 +141,11 @@ def create_app(bridge, orchestrator, runner, maps, jobs, settings, web_dir):
     @app.route('/api/mapping/stop', methods=['POST'])
     def mapping_stop():
         orchestrator.stop_mapping()
+        return ok()
+
+    @app.route('/api/mapping/reset', methods=['POST'])
+    def mapping_reset():
+        orchestrator.reset_map()
         return ok()
 
     @app.route('/api/mapping/save', methods=['POST'])
@@ -248,7 +256,8 @@ def create_app(bridge, orchestrator, runner, maps, jobs, settings, web_dir):
             raise OperationError('Job 실행 중에는 직접 이동 명령을 보낼 수 없습니다.')
         if not bridge.nav_ready():
             raise OperationError('내비게이션이 준비되지 않았습니다.')
-        task = bridge.navigate([(float(data['x']), float(data['y']), float(data.get('yaw', 0.0)))])
+        xy_tol, yaw_tol = (None if data.get(key) in (None, '') else float(data[key]) for key in ('xy_tol', 'yaw_tol'))
+        task = orchestrator.navigate([(float(data['x']), float(data['y']), float(data.get('yaw', 0.0)))], xy_tol, yaw_tol)
         return ok(task=task.as_dict())
 
     @app.route('/api/nav/cancel', methods=['POST'])
@@ -337,7 +346,8 @@ def main(args=None):
 
     maps = MapStore(data_dir)
     jobs = JobStore(data_dir)
-    settings = SettingsStore(data_dir)
+    # the lowest speed of the robot model is the default of the virtual keyboard
+    settings = SettingsStore(data_dir, teleop={'lin_vel': STEP_LIN_VEL, 'ang_vel': STEP_ANG_VEL})
     orchestrator = Orchestrator(bridge, maps, data_dir, sim=sim, sim_world=bridge.get_parameter('sim_world').value)
     runner = JobRunner(bridge, maps, jobs, orchestrator)
     orchestrator.job_runner = runner

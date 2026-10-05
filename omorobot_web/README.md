@@ -43,12 +43,12 @@ ros2 launch omorobot_web web_launch.py sim:=true
 | 메뉴 | 기능 |
 |---|---|
 | Job 프로그램 | 명령을 조합하여 Job 작성, 실행 / 일시 정지 / 정지, 실행 모니터 |
-| 맵 생성 | 매핑 시작·종료, 실시간 맵 확인, 현재 위치를 포인트로 등록, 맵 저장 |
+| 맵 생성 | 매핑 시작·종료, 실시간 맵 확인, 현재 위치를 포인트로 등록, 맵 저장, 맵 초기화 |
 | 위치 포인트 | 정지 위치·경유점(waypoint) 추가·수정·삭제, 내비게이션 시작, 초기 위치 설정, 포인트로 이동 |
 | 맵 수정 | 브러시·직선·사각형으로 벽(진입 금지)을 그리거나 노이즈 제거, 원본 복원 |
 | 맵 관리 | 맵 이름 변경, 복제, 삭제, 다운로드, 기존 맵 파일(yaml + pgm) 가져오기 |
 | 시스템 | 프로세스 상태·로그, I/O 상태와 이름 설정 |
-| 가상 키보드 | 메뉴 아래 버튼으로 열고 닫음. W A S D X 키 또는 화면 버튼으로 로봇 조작 |
+| 가상 키보드 | 메뉴 아래 버튼으로 열고 닫음. W A S D X 키 또는 화면 버튼으로 로봇 조작. 최고 속도와 속도 증감 단위는 `ROBOT_MODEL` 에 따름 |
 
 ### 사용 순서
 
@@ -56,6 +56,15 @@ ros2 launch omorobot_web web_launch.py sim:=true
 2. **위치 포인트**: 지도를 클릭(끌면 방향 지정)하여 포인트 등록
 3. **맵 수정** (선택): 로봇이 들어가면 안 되는 곳에 벽을 그림
 4. **Job 프로그램**: 맵을 선택하고 명령을 추가하여 저장 → "실행"
+
+### 정지 위치의 허용 오차
+
+포인트 편집에서 정지 위치마다 "위치 허용 오차 (cm)", "각도 허용 오차 (°)" 를 지정할 수 있습니다. 비워 두면 내비게이션 파라미터의 기본값(`general_goal_checker`, R2MINI: 10 cm / 0.1 rad)을 사용합니다.
+
+- 웹 서버가 이동 명령 직전에 `controller_server` 의 goal checker 허용 오차를 바꾸고, 위치 허용 오차에 맞는 controller(`FollowPath`, `FollowPathFine`, `FollowPathCoarse`)를 선택합니다.
+- 위치 허용 오차의 최솟값은 controller 중 가장 작은 `xy_goal_tolerance`(R2MINI: 5 cm)이며, 더 작게 입력하면 최솟값으로 이동합니다.
+- controller 가 하나뿐인 파라미터 파일(R2, DONKEYBOTI)에서는 그 controller 의 `xy_goal_tolerance` 가 최솟값입니다.
+- 경유점은 멈추지 않고 통과하므로 허용 오차는 마지막 정지 위치에만 적용됩니다.
 
 ### Job 명령
 
@@ -111,6 +120,7 @@ I/O 는 ROS 토픽으로 연결됩니다. 실제 입출력 장치를 사용하�
 | `orchestrator.py` | bringup / cartographer / navigation2 실행 순서와 전환 |
 | `process_manager.py` | `ros2 launch` 프로세스 시작·종료·로그 |
 | `job_runner.py` | Job 해석·실행 |
+| `nav_tolerance.py` | 정지 위치의 허용 오차에 맞는 controller, behavior tree 선택 |
 | `storage.py` | 맵, 포인트, Job, 설정 파일 |
 | `tf_reader.py` | tf 수신 (CPU 부하를 줄이기 위한 폴링 방식) |
 | `fake_robot.py` | 가상 로봇 (`sim:=true`) |

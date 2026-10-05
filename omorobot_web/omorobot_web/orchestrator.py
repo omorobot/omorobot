@@ -3,6 +3,9 @@ import os
 import threading
 import time
 
+from ament_index_python.packages import PackageNotFoundError, get_package_share_directory
+
+from .nav_tolerance import NavTolerance
 from .process_manager import ProcessManager
 from .storage import StorageError, clean_points, read_json, write_json
 
@@ -28,6 +31,9 @@ class Orchestrator:
             'cartographer': (),
             'navigation': ('Failed to bring up all requested nodes',),
         })
+        self.tolerance = NavTolerance(self.navigation_params(), os.path.join(data_dir, 'run'))
+        if not self.tolerance.available:
+            bridge.get_logger().warning(f'tolerance of the stop positions is not used, {self.tolerance.error}')
         self.job_runner = None
         self.nav_map = None
         self.notice = ''
@@ -123,6 +129,23 @@ class Orchestrator:
             self.bridge.stop_motion()
             self.processes['cartographer'].stop()
 
+    def reset_map(self):
+        """Throw away the map in the making. A running mapping starts again at the place of the robot."""
+        with self._lock:
+            if self.external()['cartographer']:
+                raise OperationError('외부에서 실행된 cartographer가 있습니다. 해당 터미널에서 다시 시작하세요.')
+            if self.mode() == 'navigation':
+                raise OperationError('내비게이션 실행 중에는 맵을 초기화할 수 없습니다.')
+            process = self.processes['cartographer']
+            restart = process.is_running()
+            if restart:
+                self.stop_mapping()
+            self.bridge.clear_map()
+            self.bridge.map_name = None
+            self.set_session_points([])
+            if restart:
+                process.start(process.command)
+
     def save_map(self, name, overwrite=False):
         grid = self.bridge.map_grid()
         if grid is None:
@@ -171,6 +194,29 @@ class Orchestrator:
                 {'map': map_name})
             if initial is not None:
                 threading.Thread(target=self._localize, args=(tuple(initial),), daemon=True).start()
+
+    @staticmethod
+    def navigation_params():
+        """Parameter file that navigation2_launch.py of omorobot_navigation2 takes."""
+        model = os.getenv('ROBOT_MODEL') or 'R2MINI'
+        try:
+            return os.path.join(get_package_share_directory('omorobot_navigation2'), 'param', f'{model}.yaml')
+        except PackageNotFoundError:
+            return ''
+
+    def navigate(self, poses, xy_tol=None, yaw_tol=None):
+        """Send the robot to the last pose, xy_tol / yaw_tol: tolerance of that stop position."""
+        tolerance = self.tolerance.resolve(xy_tol, yaw_tol)
+        if tolerance is None:
+            return self.bridge.navigate(poses)
+        behavior_tree = self.tolerance.behavior_tree(tolerance.controller, through_poses=len(poses) > 1)
+        if tolerance.controller != self.tolerance.default_controller and not behavior_tree:
+            raise OperationError('정지 정밀도에 맞는 behavior tree 를 만들지 못했습니다.')
+        if not self.bridge.set_goal_tolerance(self.tolerance.goal_checker, tolerance.xy, tolerance.yaw):
+            raise OperationError('정지 정밀도를 내비게이션에 설정하지 못했습니다. (controller_server)')
+        task = self.bridge.navigate(poses, behavior_tree, tolerance.as_dict())
+        task.adjusted = tolerance.adjusted
+        return task
 
     def stop_navigation(self):
         with self._lock:

@@ -104,7 +104,8 @@ export class RobotMap {
   localized(state) {
     const pose = state.robot.pose;
     if (!pose || pose.frame !== 'map') return false;
-    if (this.name === LIVE_MAP) return true;
+    // the map in the making belongs to the mapping, the map frame of the navigation is another one
+    if (this.name === LIVE_MAP) return state.mode === 'mapping';
     return Boolean(this.name) && state.map_name === this.name;
   }
 

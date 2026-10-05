@@ -14,9 +14,10 @@ const MENU = [
   { route: 'job', label: 'Job 프로그램', icon: 'job', page: jobPage },
   { group: 'Mapping' },
   { route: 'mapping', label: '맵 생성', icon: 'map', page: mappingPage },
-  { route: 'points', label: '위치 포인트', icon: 'pin', page: pointsPage },
   { route: 'edit', label: '맵 수정', icon: 'edit', page: editPage },
   { route: 'maps', label: '맵 관리', icon: 'layers', page: mapsPage },
+  { group: 'Navigation' },
+  { route: 'points', label: '위치 포인트', icon: 'pin', page: pointsPage },
   { group: '설정' },
   { route: 'system', label: '시스템', icon: 'system', page: systemPage },
 ];

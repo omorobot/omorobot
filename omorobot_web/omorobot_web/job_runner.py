@@ -1,3 +1,4 @@
+import math
 import operator
 import threading
 import time
@@ -325,7 +326,11 @@ class JobRunner:
             self.orchestrator.ensure_navigation(map_name, should_abort=self._stop.is_set)
             self._checkpoint()
             self._activity(f'이동 → {target["name"]}' + (f' (재시도 {attempt - 1})' if attempt > 1 else ''))
-            task = self.bridge.navigate(poses)
+            task = self.orchestrator.navigate(poses, target.get('xy_tol'), target.get('yaw_tol'))
+            if task.tolerance and (target.get('xy_tol') or target.get('yaw_tol')):
+                tolerance = task.tolerance
+                self.log(f'정지 허용 오차: 위치 {tolerance["xy"] * 100.0:g} cm, 각도 {math.degrees(tolerance["yaw"]):.1f}°'
+                         + (' (위치는 설정 가능한 최소값으로 조정)' if task.adjusted else ''))
             paused = False
             while not task.done:
                 if self._stop.is_set():

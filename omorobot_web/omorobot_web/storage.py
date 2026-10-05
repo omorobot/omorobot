@@ -14,6 +14,11 @@ from PIL import Image
 
 NAME_PATTERN = re.compile(r'^[0-9A-Za-z가-힣_\-]{1,40}$')
 POINT_TYPES = ('stop', 'waypoint')
+# tolerance of a stop position: (key, lowest, highest, name), not set = default of the navigation
+POINT_TOLERANCES = (
+    ('xy_tol', 0.01, 1.0, '위치 허용 오차는 1~100 cm'),
+    ('yaw_tol', 0.0174, 3.1416, '각도 허용 오차는 1~180°'),
+)
 
 # pgm gray levels used by nav2 map_server (trinary mode)
 GRAY_OCCUPIED = 0
@@ -21,7 +26,7 @@ GRAY_UNKNOWN = 205
 GRAY_FREE = 254
 
 DEFAULT_SETTINGS = {
-    'teleop': {'lin_vel': 0.15, 'ang_vel': 0.5, 'mode': 'hold'},
+    'teleop': {'lin_vel': 0.05, 'ang_vel': 0.1, 'mode': 'step'},
     'io': {
         'din_labels': [f'DI{i + 1}' for i in range(8)],
         'dout_labels': [f'DO{i + 1}' for i in range(8)],
@@ -75,8 +80,15 @@ def clean_points(points):
                 'y': round(float(point['y']), 3),
                 'yaw': round(float(point.get('yaw', 0.0)), 4),
             }
+            tolerances = {
+                key: float(point[key]) for key, _, _, _ in POINT_TOLERANCES if point.get(key) not in (None, '')}
         except (KeyError, TypeError, ValueError):
             raise StorageError('포인트 데이터 형식이 올바르지 않습니다.')
+        for key, low, high, message in POINT_TOLERANCES:
+            if key in tolerances:
+                if not low <= tolerances[key] <= high:
+                    raise StorageError(f'{message} 범위로 입력하세요. ({name})')
+                item[key] = round(tolerances[key], 4)
         if not name or len(name) > 40:
             raise StorageError('포인트 이름은 1~40자로 입력하세요.')
         if item['type'] not in POINT_TYPES:
@@ -424,13 +436,16 @@ def count_steps(steps):
 
 
 class SettingsStore:
-    def __init__(self, root):
+    def __init__(self, root, teleop=None):
+        """teleop: defaults of the robot model in place of DEFAULT_SETTINGS"""
         self.file = os.path.join(root, 'settings.json')
+        self.defaults = json.loads(json.dumps(DEFAULT_SETTINGS))
+        self.defaults['teleop'].update(teleop or {})
         self._lock = threading.RLock()
 
     def get(self):
         stored = read_json(self.file, default={}) or {}
-        settings = json.loads(json.dumps(DEFAULT_SETTINGS))
+        settings = json.loads(json.dumps(self.defaults))
         for section, values in stored.items():
             if section in settings and isinstance(values, dict):
                 settings[section].update(values)

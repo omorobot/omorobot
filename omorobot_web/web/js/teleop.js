@@ -3,8 +3,6 @@ import { api, store } from './api.js';
 import { h, clear, icon, toast, select } from './ui.js';
 
 const SEND_PERIOD = 100;      // ms, the server stops the robot 0.5s after the last command
-const STEP_LIN = 0.05;
-const STEP_ANG = 0.1;
 const KEYS = {
   w: 'forward', arrowup: 'forward',
   x: 'backward', arrowdown: 'backward',
@@ -27,9 +25,11 @@ class Teleop {
     this.root = document.getElementById('teleop');
     this.toggle = document.getElementById('teleop-toggle');
     this.open = false;
-    this.mode = 'hold';                     // hold: move while pressed, step: like teleop_keyboard
-    this.speed = { lin: 0.15, ang: 0.5 };
+    this.mode = 'step';                     // hold: move while pressed, step: like teleop_keyboard
+    // limits and steps follow ROBOT_MODEL, the server sends them with the state
     this.limits = { lin: 0.3, ang: 1.0 };
+    this.steps = { lin: 0.05, ang: 0.1 };
+    this.speed = { lin: 0.05, ang: 0.1 };
     this.pressed = new Set();
     this.target = { lin: 0, ang: 0 };
     this.sending = false;
@@ -56,7 +56,17 @@ class Teleop {
     } catch (error) {
       // defaults
     }
+    this.fitSpeed();
     this.render();
+  }
+
+  // speed of the sliders on the step grid of the robot model, the lowest speed is one step
+  fitSpeed() {
+    for (const axis of ['lin', 'ang']) {
+      const step = this.steps[axis];
+      const value = Math.round((Number(this.speed[axis]) || 0) / step) * step;
+      this.speed[axis] = Math.round(Math.min(this.limits[axis], Math.max(step, value)) * 100) / 100;
+    }
   }
 
   saveSettings() {
@@ -67,7 +77,16 @@ class Teleop {
     this.open = open;
     this.root.hidden = !open;
     this.toggle.classList.toggle('active', open);
-    if (!open) this.stop();
+    clearInterval(this.timer);
+    this.timer = null;
+    if (open) {
+      // the command is sent as long as the keyboard is open, zero too
+      this.send();
+      this.timer = setInterval(() => this.send(), SEND_PERIOD);
+    } else {
+      // closed: the server stops publishing cmd_vel
+      this.stop();
+    }
   }
 
   render() {
@@ -85,10 +104,10 @@ class Teleop {
       this.keys[name] = element;
       return element;
     };
-    const slider = (axis, label, unit, min) => {
+    const slider = (axis, label, unit) => {
       const value = h('span.mono', `${this.speed[axis].toFixed(2)} ${unit}`);
       const input = h('input', {
-        type: 'range', min, max: this.limits[axis], step: 0.05, value: this.speed[axis],
+        type: 'range', min: this.steps[axis], max: this.limits[axis], step: this.steps[axis], value: this.speed[axis],
         oninput: () => {
           this.speed[axis] = Number(input.value);
           value.textContent = `${this.speed[axis].toFixed(2)} ${unit}`;
@@ -108,11 +127,11 @@ class Teleop {
           key('left', 'A', '좌회전'), key('stop', 'S', '정지', '.stop'), key('right', 'D', '우회전'),
           h('div.key.blank'), key('backward', 'X', '후진'), h('div.key.blank')),
         this.readout,
-        slider('lin', '선속도', 'm/s', 0.05),
-        slider('ang', '각속도', 'rad/s', 0.1),
+        slider('lin', '선속도', 'm/s'),
+        slider('ang', '각속도', 'rad/s'),
         h('label.field', h('span', '조작 방식'), select([
+          ['step', '누를 때마다 속도 증감'],
           ['hold', '누르는 동안 이동'],
-          ['step', '누를 때마다 속도 증감 (teleop_keyboard 방식)'],
         ], this.mode, (value) => {
           this.stop();
           this.mode = value;
@@ -176,10 +195,10 @@ class Teleop {
   step(name) {
     const clamp = (value, limit) => Math.round(Math.min(limit, Math.max(-limit, value)) * 100) / 100;
     let { lin, ang } = this.target;
-    if (name === 'forward') lin = clamp(lin + STEP_LIN, this.limits.lin);
-    if (name === 'backward') lin = clamp(lin - STEP_LIN, this.limits.lin);
-    if (name === 'left') ang = clamp(ang + STEP_ANG, this.limits.ang);
-    if (name === 'right') ang = clamp(ang - STEP_ANG, this.limits.ang);
+    if (name === 'forward') lin = clamp(lin + this.steps.lin, this.limits.lin);
+    if (name === 'backward') lin = clamp(lin - this.steps.lin, this.limits.lin);
+    if (name === 'left') ang = clamp(ang + this.steps.ang, this.limits.ang);
+    if (name === 'right') ang = clamp(ang - this.steps.ang, this.limits.ang);
     this.setTarget(lin, ang);
   }
 
@@ -187,22 +206,17 @@ class Teleop {
     this.target = { lin, ang };
     this.updateReadout();
     this.send();
-    const moving = lin !== 0 || ang !== 0;
-    if (moving && !this.timer) this.timer = setInterval(() => this.send(), SEND_PERIOD);
-    if (!moving && this.timer) {
-      clearInterval(this.timer);
-      this.timer = null;
-    }
   }
 
   async send() {
     if (this.sending) return;
     this.sending = true;
+    const moving = this.target.lin !== 0 || this.target.ang !== 0;
     try {
       await api.post('/api/teleop', this.target);
     } catch (error) {
       this.releaseAll();
-      if (Date.now() - this.lastError > 3000) {
+      if (moving && Date.now() - this.lastError > 3000) {
         this.lastError = Date.now();
         toast(error.message, 'error');
       }
@@ -220,15 +234,11 @@ class Teleop {
     for (const element of Object.values(this.keys)) element.classList.remove('pressed');
     const moving = this.target.lin !== 0 || this.target.ang !== 0;
     this.target = { lin: 0, ang: 0 };
-    if (this.timer) {
-      clearInterval(this.timer);
-      this.timer = null;
-    }
     this.updateReadout();
     return moving;
   }
 
-  // immediate stop without the deceleration ramp
+  // immediate stop without the deceleration ramp, an open keyboard goes on sending zero
   stop() {
     this.halt();
     api.post('/api/teleop/stop').catch(() => {});
@@ -236,8 +246,16 @@ class Teleop {
 
   onState(state) {
     if (!state) return;
-    this.limits = state.robot.limits;
+    const { limits, steps = this.steps } = state.robot;
+    const changed = ['lin', 'ang'].some((axis) => limits[axis] !== this.limits[axis] || steps[axis] !== this.steps[axis]);
+    this.limits = limits;
+    this.steps = steps;
     this.velocity = state.robot.velocity;
+    if (changed) {
+      // another robot model than the defaults: sliders with the new range
+      this.fitSpeed();
+      this.render();
+    }
     if (this.open) this.updateReadout();
   }
 

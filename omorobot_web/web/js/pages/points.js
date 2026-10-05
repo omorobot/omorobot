@@ -1,4 +1,4 @@
-// Mapping > 위치 포인트: stop positions and waypoints on a map
+// Navigation > 위치 포인트: stop positions and waypoints on a map
 import { api, mapPath, store, LIVE_MAP } from '../api.js';
 import { h, clear, button, toast, formDialog, confirmDialog, field, degrees, radians } from '../ui.js';
 import { RobotMap, MapSelector, pointTypeLabel, pointTypeSelect } from '../components.js';
@@ -156,8 +156,17 @@ function mount(root) {
   }
 
   async function goTo(point) {
-    await api.post('/api/nav/goto', { x: point.x, y: point.y, yaw: point.yaw });
-    toast(`"${point.name}" (으)로 이동합니다.`);
+    const { task } = await api.post('/api/nav/goto', { x: point.x, y: point.y, yaw: point.yaw, xy_tol: point.xy_tol, yaw_tol: point.yaw_tol });
+    const tolerance = task.tolerance ? ` (허용 오차 ${toleranceText(task.tolerance.xy, task.tolerance.yaw)})` : '';
+    toast(`"${point.name}" (으)로 이동합니다.${tolerance}`);
+  }
+
+  // tolerance of a stop position, not set: default of the navigation
+  function toleranceText(xy, yaw) {
+    const parts = [];
+    if (xy) parts.push(`±${Math.round(xy * 1000) / 10} cm`);
+    if (yaw) parts.push(`±${degrees(yaw)}°`);
+    return parts.join(' / ');
   }
 
   async function remove(point) {
@@ -175,7 +184,8 @@ function mount(root) {
       list.appendChild(h(`div.list-item${point.id === selected ? '.selected' : ''}`, { onclick: () => select(point.id) },
         h(`span.dot.${point.type}`),
         h('div.grow', h('div.title', point.name),
-          h('div.sub', `${pointTypeLabel(point.type)} · x ${point.x.toFixed(2)}  y ${point.y.toFixed(2)}  θ ${degrees(point.yaw)}°`))));
+          h('div.sub', `${pointTypeLabel(point.type)} · x ${point.x.toFixed(2)}  y ${point.y.toFixed(2)}  θ ${degrees(point.yaw)}°`),
+          point.xy_tol || point.yaw_tol ? h('div.sub', `허용 오차 ${toleranceText(point.xy_tol, point.yaw_tol)}`) : null)));
     }
     renderEditor();
   }
@@ -189,12 +199,28 @@ function mount(root) {
     const xInput = h('input', { type: 'number', step: 0.01, value: point.x });
     const yInput = h('input', { type: 'number', step: 0.01, value: point.y });
     const yawInput = h('input', { type: 'number', step: 1, value: degrees(point.yaw) });
+    // stop precision of this point, empty: default of the navigation
+    const limits = (lastState && lastState.nav.tolerance) || { xy: 0.1, yaw: 0.1, min_xy: 0.05 };
+    const minXy = Math.round(limits.min_xy * 1000) / 10;
+    const xyTolInput = h('input', {
+      type: 'number', step: 1, min: minXy, max: 100,
+      value: point.xy_tol ? Math.round(point.xy_tol * 1000) / 10 : '',
+      placeholder: `기본 ${Math.round(limits.xy * 1000) / 10}`,
+    });
+    const yawTolInput = h('input', {
+      type: 'number', step: 1, min: 1, max: 180,
+      value: point.yaw_tol ? degrees(point.yaw_tol) : '',
+      placeholder: `기본 ${degrees(limits.yaw)}`,
+    });
+    const tolerance = (input, toValue) => (input.value.trim() === '' ? null : toValue(Number(input.value)));
     const apply = () => change(point.id, {
       name: nameInput.value.trim(),
       type: typeSelect.value,
       x: Number(xInput.value),
       y: Number(yInput.value),
       yaw: radians(Number(yawInput.value)),
+      xy_tol: tolerance(xyTolInput, (value) => value / 100),
+      yaw_tol: tolerance(yawTolInput, radians),
     });
     const goButton = button('여기로 이동', { iconName: 'play', onclick: () => goTo(point) });
     goButton.disabled = !(localized && lastState && lastState.nav.ready && lastState.job.state !== 'running');
@@ -204,6 +230,8 @@ function mount(root) {
       field('이름', nameInput),
       field('종류', typeSelect),
       h('div.field-row', field('x (m)', xInput), field('y (m)', yInput), field('방향 (°)', yawInput)),
+      h('div.field-row', field('위치 허용 오차 (cm)', xyTolInput), field('각도 허용 오차 (°)', yawTolInput)),
+      h('p.muted.small-text', `정지 위치에 도착한 것으로 보는 범위입니다. 비워 두면 기본값을 사용합니다. 위치는 ${minXy} cm 이상으로 입력하세요.`),
       h('div.inline.wrap',
         button('적용', { kind: 'primary', iconName: 'check', onclick: apply }),
         button('지도에서 다시 지정', { iconName: 'pin', onclick: () => repick(point) }),

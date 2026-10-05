@@ -27,6 +27,8 @@ function mount(root) {
   let redo = [];
   let dirty = false;
   let stroke = null;          // {before, from: [x, y], to: [x, y], bounds}
+  let points = [];
+  let showPoints = false;     // points of the map on top of the map, hidden until asked for
 
   const selector = new MapSelector({ onchange: (value, info) => selectMap(value, info) });
   const toolButtons = TOOLS.map(([id, label, iconName]) => {
@@ -42,6 +44,11 @@ function mount(root) {
   });
   const undoButton = button('', { iconName: 'undo', title: '실행 취소 (Ctrl+Z)', onclick: () => revert(undo, redo) });
   const redoButton = button('', { iconName: 'redo', title: '다시 실행 (Ctrl+Y)', onclick: () => revert(redo, undo) });
+  const pointsButton = button('위치 포인트 표시', {
+    iconName: 'pin',
+    title: '맵에 등록된 위치 포인트를 표시 / 숨김',
+    onclick: () => { showPoints = !showPoints; updatePoints(); },
+  });
   const saveButton = button('저장', { kind: 'primary', iconName: 'save', onclick: () => save() });
   const saveAsButton = button('다른 이름으로 저장', { iconName: 'copy', onclick: saveAs });
   const restoreButton = button('원본 복원', { iconName: 'refresh', onclick: restore });
@@ -51,7 +58,7 @@ function mount(root) {
     h('div.map-toolbar', h('span.label', '맵'), selector.element, h('span.sep'),
       toolButtons, h('span.sep'),
       paintSelect, h('span.label', '굵기'), sizeInput, sizeLabel, h('span.sep'),
-      undoButton, redoButton),
+      undoButton, redoButton, h('span.sep'), pointsButton),
     h('div.map-toolbar', saveButton, saveAsButton, restoreButton, info));
   const map = new RobotMap(frame, { showScan: false });
   map.view.followButton.hidden = true;
@@ -82,13 +89,21 @@ function mount(root) {
     map.name = '';
     map.setMap(value, information);
     updateButtons();
+    points = [];
+    updatePoints();
     if (!value) return;
     try {
-      const { points } = await api.get(`${mapPath(value)}/points`);
-      map.view.setPoints(points);
+      ({ points } = await api.get(`${mapPath(value)}/points`));
     } catch (error) {
-      map.view.setPoints([]);
+      points = [];
     }
+    updatePoints();
+  }
+
+  function updatePoints() {
+    pointsButton.classList.toggle('active', showPoints);
+    pointsButton.setAttribute('aria-pressed', String(showPoints));
+    map.view.setPoints(showPoints ? points : []);
   }
 
   function setTool(id) {
