@@ -1,0 +1,27 @@
+# Start the omorobot web ui at boot.
+#
+#   mkdir -p ~/.config/systemd/user
+#   cp ~/ros2_ws/src/omorobot/omorobot_web/systemd/omorobot-web.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now omorobot-web
+#   sudo loginctl enable-linger $USER        # start without a login
+#
+# Edit the Environment lines to the robot in use.
+
+[Unit]
+Description=OMOROBOT web ui
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Environment=LIDAR_MODEL=TMINIPRO
+Environment=MOTOR_MODEL=NEW
+Environment=ROBOT_MODEL=R2MINI
+ExecStart=/bin/bash -c 'source /opt/ros/humble/setup.bash && source %h/ros2_ws/install/setup.bash && exec ros2 launch omorobot_web web_launch.py'
+KillSignal=SIGINT
+TimeoutStopSec=20
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

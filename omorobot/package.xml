@@ -15,6 +15,7 @@
   <exec_depend>omorobot_navigation2</exec_depend>
   <exec_depend>omorobot_robot</exec_depend>
   <exec_depend>omorobot_teleop</exec_depend>
+  <exec_depend>omorobot_web</exec_depend>
 
   <export>
     <build_type>ament_cmake</build_type>
