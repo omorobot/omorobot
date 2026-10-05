@@ -8,7 +8,7 @@ export const GRAY_FREE = 254;
 const COLOR_OCCUPIED = [27, 36, 52];
 const COLOR_FREE = [255, 255, 255];
 const COLOR_UNKNOWN = [205, 212, 222];
-const POINT_COLORS = { stop: '#0e9f6e', waypoint: '#8b5cf6' };
+const POINT_COLORS = { stop: '#0e9f6e', waypoint: '#8b5cf6', start: '#f97316' };
 const ROBOT_RADIUS = 0.12;
 const HIT_RADIUS = 14;
 
@@ -56,9 +56,13 @@ export class MapView {
     this.hint = h('div.map-hint', { hidden: true });
     this.empty = h('div.map-empty', { hidden: true });
     this.status = h('div.map-status', { hidden: true });
+    this.legend = h('div.map-legend', { hidden: true },
+      h('span', h('span.dot.stop'), '정지 위치'),
+      h('span', h('span.dot.waypoint'), '경유점'),
+      h('span', h('span.dot.start'), '시작 위치'));
     this.followButton = button('', { iconName: 'locate', title: '로봇 따라가기', onclick: () => this.setFollow(!this.follow) });
     this.root.append(
-      this.canvas, this.empty, this.hint, this.status,
+      this.canvas, this.empty, this.hint, this.status, this.legend,
       h('div.map-controls',
         button('', { iconName: 'zoomIn', title: '확대', onclick: () => this.zoom(1.4) }),
         button('', { iconName: 'zoomOut', title: '축소', onclick: () => this.zoom(1 / 1.4) }),
@@ -154,6 +158,7 @@ export class MapView {
 
   setPoints(points, selected = null) {
     this.points = points || [];
+    this.legend.hidden = !this.points.length;
     this.selected = selected;
     this.draw();
   }
@@ -498,7 +503,7 @@ export class MapView {
   drawPoint(context, point, selected) {
     const [sx, sy] = this.toScreen(point.x, point.y);
     if (sx < -60 || sy < -60 || sx > this.width + 60 || sy > this.height + 60) return;
-    const color = POINT_COLORS[point.type] || POINT_COLORS.stop;
+    const color = (point.start && POINT_COLORS.start) || POINT_COLORS[point.type] || POINT_COLORS.stop;
     this.drawArrow(context, sx, sy, point.yaw, 20, color);
     if (selected) {
       context.strokeStyle = color;
@@ -524,15 +529,9 @@ export class MapView {
     }
     context.fill();
     context.stroke();
-    if (point.start) {
-      // start position: ring around the dot
-      context.strokeStyle = color;
-      context.lineWidth = 2.5;
-      context.beginPath();
-      context.arc(sx, sy, 11.5, 0, Math.PI * 2);
-      context.stroke();
-    }
-    this.drawLabel(context, point.start ? `${point.name} (시작)` : point.name, sx, sy + (point.start ? 15 : 12));
+    // name below the point, above it when the arrow points down
+    const down = Math.sin(point.yaw) < -0.5;
+    this.drawLabel(context, point.start ? `${point.name} (시작)` : point.name, sx, down ? sy - 26 : sy + 12);
   }
 
   drawGoal(context) {

@@ -295,6 +295,7 @@ input:disabled, select:disabled { background: var(--surface-2); color: var(--mut
 .dot { border-radius: 50%; flex: none; height: 10px; width: 10px; }
 .dot.stop { background: #0e9f6e; }
 .dot.waypoint { background: #8b5cf6; }
+.dot.start { background: #f97316; }
 
 .tabs { border-bottom: 1px solid var(--border); display: flex; gap: 2px; margin-bottom: 12px; }
 
@@ -397,6 +398,21 @@ input:disabled, select:disabled { background: var(--surface-2); color: var(--mut
 }
 
 .map-controls .btn { box-shadow: 0 1px 3px rgba(16, 24, 40, 0.18); }
+
+.map-legend {
+  background: rgba(255, 255, 255, 0.88);
+  border-radius: 6px;
+  display: flex;
+  font-size: 12px;
+  gap: 12px;
+  padding: 4px 10px;
+  pointer-events: none;
+  position: absolute;
+  right: 12px;
+  top: 12px;
+}
+.map-legend > span { align-items: center; display: flex; gap: 5px; }
+.map-legend .dot.waypoint { border-radius: 1px; transform: rotate(45deg); }
 
 .map-status {
   background: rgba(255, 255, 255, 0.88);

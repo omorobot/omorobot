@@ -208,7 +208,7 @@ function mount(root) {
     if (!points.length) list.appendChild(h('div.empty', name ? '포인트가 없습니다. "지도에서 추가"로 등록하세요.' : '맵을 선택하세요.'));
     for (const point of points) {
       list.appendChild(h(`div.list-item${point.id === selected ? '.selected' : ''}`, { onclick: () => select(point.id) },
-        h(`span.dot.${point.type}`),
+        h(`span.dot.${pointKind(point)}`),
         h('div.grow', h('div.title', point.name),
           h('div.sub', `${pointTypeLabel(pointKind(point))} · x ${point.x.toFixed(2)}  y ${point.y.toFixed(2)}  θ ${degrees(point.yaw)}°`),
           point.xy_tol || point.yaw_tol ? h('div.sub', `허용 오차 ${toleranceText(point.xy_tol, point.yaw_tol)}`) : null)));
