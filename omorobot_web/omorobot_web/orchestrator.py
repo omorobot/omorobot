@@ -170,7 +170,7 @@ class Orchestrator:
 
     # ------------------------------------------------------------------ navigation
     def start_navigation(self, map_name, initial='auto', stop_job=True):
-        """initial: 'auto' (last known pose, else map origin), 'origin' or (x, y, yaw)."""
+        """initial: 'auto' (last known pose, else start position, else map origin), 'origin' or (x, y, yaw)."""
         with self._lock:
             self.maps.require(map_name)
             if self.external()['navigation']:
@@ -182,7 +182,7 @@ class Orchestrator:
             self.stop_navigation()
             self.start_bringup()
             if initial == 'auto':
-                initial = self.bridge.remembered_pose(map_name)
+                initial = self.bridge.remembered_pose(map_name) or self.maps.start_pose(map_name)
             elif initial == 'origin':
                 initial = None
             self.bridge.clear_map()

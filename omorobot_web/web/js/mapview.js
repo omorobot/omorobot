@@ -524,7 +524,15 @@ export class MapView {
     }
     context.fill();
     context.stroke();
-    this.drawLabel(context, point.name, sx, sy + 12);
+    if (point.start) {
+      // start position: ring around the dot
+      context.strokeStyle = color;
+      context.lineWidth = 2.5;
+      context.beginPath();
+      context.arc(sx, sy, 11.5, 0, Math.PI * 2);
+      context.stroke();
+    }
+    this.drawLabel(context, point.start ? `${point.name} (시작)` : point.name, sx, sy + (point.start ? 15 : 12));
   }
 
   drawGoal(context) {

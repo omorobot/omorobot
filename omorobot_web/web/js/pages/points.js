@@ -25,6 +25,7 @@ function mount(root) {
   const navStart = button('이 맵으로 내비게이션 시작', { kind: 'primary', iconName: 'play', onclick: startNavigation });
   const navStop = button('내비게이션 종료', { iconName: 'stop', onclick: () => api.post('/api/nav/stop').then(() => store.refresh()) });
   const initialButton = button('초기 위치 설정', { iconName: 'flag', onclick: pickInitialPose });
+  const startPoseButton = button('시작 위치로 맞춤', { iconName: 'locate', onclick: resetToStart });
   const cancelButton = button('이동 취소', { iconName: 'close', onclick: () => api.post('/api/nav/cancel') });
   const list = h('div.list');
   const editor = h('div.card.stack', { hidden: true });
@@ -34,7 +35,7 @@ function mount(root) {
       h('div.inline', h('h3.grow', { style: 'margin:0' }, '내비게이션'), navBadge),
       navText,
       h('div.inline.wrap', navStart, navStop),
-      h('div.inline.wrap', initialButton, cancelButton),
+      h('div.inline.wrap', initialButton, startPoseButton, cancelButton),
     ),
     h('div.card.stack', h('h3', '포인트 목록'), list),
     editor,
@@ -76,8 +77,14 @@ function mount(root) {
     render();
   }
 
+  // a map has one start position
   function change(id, values) {
-    return savePoints(points.map((point) => (point.id === id ? { ...point, ...values } : point)));
+    return savePoints(points.map((point) => (
+      point.id === id ? { ...point, ...values } : { ...point, start: values.start ? false : point.start })));
+  }
+
+  function startPoint() {
+    return points.find((point) => point.start);
   }
 
   function nextName() {
@@ -155,6 +162,16 @@ function mount(root) {
     }, '로봇의 실제 위치를 클릭하고, 끌어서 로봇이 향한 방향을 지정하세요 (Esc: 취소)');
   }
 
+  // the robot was put back on the start position by hand
+  async function resetToStart() {
+    const point = startPoint();
+    if (!point) return;
+    const yes = await confirmDialog('시작 위치로 맞춤', `로봇이 시작 위치 "${point.name}" 에 놓여 있다고 보고 로봇 위치를 다시 설정합니다. 계속할까요?`, { confirm: '설정' });
+    if (!yes) return;
+    await api.post('/api/nav/initial_pose', { x: point.x, y: point.y, yaw: point.yaw });
+    toast('로봇 위치를 시작 위치로 설정했습니다.', 'ok');
+  }
+
   async function goTo(point) {
     const { task } = await api.post('/api/nav/goto', { x: point.x, y: point.y, yaw: point.yaw, xy_tol: point.xy_tol, yaw_tol: point.yaw_tol });
     const tolerance = task.tolerance ? ` (허용 오차 ${toleranceText(task.tolerance.xy, task.tolerance.yaw)})` : '';
@@ -184,6 +201,7 @@ function mount(root) {
       list.appendChild(h(`div.list-item${point.id === selected ? '.selected' : ''}`, { onclick: () => select(point.id) },
         h(`span.dot.${point.type}`),
         h('div.grow', h('div.title', point.name),
+          point.start ? h('div.sub', '시작 위치 (전원을 켤 때 로봇을 두는 곳)') : null,
           h('div.sub', `${pointTypeLabel(point.type)} · x ${point.x.toFixed(2)}  y ${point.y.toFixed(2)}  θ ${degrees(point.yaw)}°`),
           point.xy_tol || point.yaw_tol ? h('div.sub', `허용 오차 ${toleranceText(point.xy_tol, point.yaw_tol)}`) : null)));
     }
@@ -212,6 +230,11 @@ function mount(root) {
       value: point.yaw_tol ? degrees(point.yaw_tol) : '',
       placeholder: `기본 ${degrees(limits.yaw)}`,
     });
+    const startInput = h('input', { type: 'checkbox', checked: Boolean(point.start), disabled: point.type !== 'stop' });
+    typeSelect.addEventListener('change', () => {
+      startInput.disabled = typeSelect.value !== 'stop';
+      if (startInput.disabled) startInput.checked = false;
+    });
     const tolerance = (input, toValue) => (input.value.trim() === '' ? null : toValue(Number(input.value)));
     const apply = () => change(point.id, {
       name: nameInput.value.trim(),
@@ -221,6 +244,7 @@ function mount(root) {
       yaw: radians(Number(yawInput.value)),
       xy_tol: tolerance(xyTolInput, (value) => value / 100),
       yaw_tol: tolerance(yawTolInput, radians),
+      start: startInput.checked,
     });
     const goButton = button('여기로 이동', { iconName: 'play', onclick: () => goTo(point) });
     goButton.disabled = !(localized && lastState && lastState.nav.ready && lastState.job.state !== 'running');
@@ -232,6 +256,8 @@ function mount(root) {
       h('div.field-row', field('x (m)', xInput), field('y (m)', yInput), field('방향 (°)', yawInput)),
       h('div.field-row', field('위치 허용 오차 (cm)', xyTolInput), field('각도 허용 오차 (°)', yawTolInput)),
       h('p.muted.small-text', `정지 위치에 도착한 것으로 보는 범위입니다. 비워 두면 기본값을 사용합니다. 위치는 ${minXy} cm 이상으로 입력하세요.`),
+      h('label.inline', startInput, h('span', '시작 위치로 지정')),
+      h('p.muted.small-text', '전원을 켠 뒤 내비게이션을 시작하면 로봇이 이 위치에 이 방향으로 놓여 있다고 봅니다. 맵마다 정지 위치 하나만 지정할 수 있습니다.'),
       h('div.inline.wrap',
         button('적용', { kind: 'primary', iconName: 'check', onclick: apply }),
         button('지도에서 다시 지정', { iconName: 'pin', onclick: () => repick(point) }),
@@ -255,7 +281,8 @@ function mount(root) {
     const mine = state.mode === 'navigation' && state.nav.map === name;
     const external = state.processes.navigation.external;
     let badge = ['정지', ''];
-    let text = '포인트로 이동하거나 Job을 실행하려면 내비게이션을 시작하세요. 로봇은 맵의 원점(매핑 시작 위치) 또는 마지막으로 알려진 위치에 있다고 가정합니다.';
+    const start = startPoint();
+    let text = `포인트로 이동하거나 Job을 실행하려면 내비게이션을 시작하세요. 로봇은 마지막으로 알려진 위치, 모르면 ${start ? `시작 위치 "${start.name}"` : '맵의 원점(매핑 시작 위치)'} 에 있다고 가정합니다.`;
     if (live) {
       text = '매핑 중에는 포인트 등록만 가능합니다. 맵을 저장한 뒤 내비게이션을 시작하세요.';
     } else if (state.processes.navigation.alert && mine) {
@@ -277,6 +304,7 @@ function mount(root) {
     navStart.disabled = live || !name || mine || external;
     navStop.disabled = state.mode !== 'navigation' || external;
     initialButton.disabled = !(mine && state.nav.ready);
+    startPoseButton.disabled = !(mine && state.nav.ready && start) || state.job.state === 'running';
     const task = state.nav.task;
     cancelButton.disabled = !(task && (task.status === 'active' || task.status === 'pending')) || state.job.state === 'running';
     pickButton.disabled = !name || (live && !state.map.available);

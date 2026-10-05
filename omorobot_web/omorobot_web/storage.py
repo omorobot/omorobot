@@ -69,6 +69,7 @@ def clean_points(points):
     if not isinstance(points, list):
         raise StorageError('포인트 목록 형식이 올바르지 않습니다.')
     cleaned, names, ids = [], set(), set()
+    has_start = False
     for point in points:
         try:
             name = str(point['name']).strip()
@@ -95,6 +96,10 @@ def clean_points(points):
             raise StorageError(f'알 수 없는 포인트 종류입니다: {item["type"]}')
         if name in names:
             raise StorageError(f'포인트 이름이 중복됩니다: {name}')
+        # start position: where the robot stands when it is switched on, one stop position of a map
+        if point.get('start') is True and item['type'] == 'stop' and not has_start:
+            item['start'] = True
+            has_start = True
         if item['id'] in ids:
             item['id'] = new_id('p')
         names.add(name)
@@ -280,6 +285,13 @@ class MapStore:
 
     def points(self, name):
         return read_json(self.path(name, self.POINTS), default=[]) or []
+
+    def start_pose(self, name):
+        """(x, y, yaw) of the start position of the map, None: not set."""
+        for point in self.points(name):
+            if point.get('start'):
+                return (point['x'], point['y'], point['yaw'])
+        return None
 
     def set_points(self, name, points):
         self.require(name)
