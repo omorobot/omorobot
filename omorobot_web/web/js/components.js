@@ -214,10 +214,26 @@ export class LogView {
   }
 }
 
-export function pointTypeLabel(type) {
-  return type === 'waypoint' ? '경유점' : '정지 위치';
+// kind of a point on the screen: stop, waypoint or start (saved as a stop position with start: true)
+export const POINT_KINDS = [['stop', '정지 위치'], ['waypoint', '경유점 (waypoint)'], ['start', '시작 위치']];
+
+export function pointKind(point) {
+  return point.start && point.type === 'stop' ? 'start' : point.type;
+}
+
+export function pointKindValues(kind) {
+  return kind === 'start' ? { type: 'stop', start: true } : { type: kind, start: false };
+}
+
+export function pointTypeLabel(kind) {
+  if (kind === 'start') return '시작 위치';
+  return kind === 'waypoint' ? '경유점' : '정지 위치';
 }
 
 export function pointTypeSelect(value, onchange) {
-  return select([['stop', '정지 위치 (정지 + 방향 맞춤)'], ['waypoint', '경유점 (waypoint, 통과)']], value, onchange);
+  return select([
+    ['stop', '정지 위치 (정지 + 방향 맞춤)'],
+    ['waypoint', '경유점 (waypoint, 통과)'],
+    ['start', '시작 위치 (전원을 켤 때 로봇을 두는 곳)'],
+  ], value, onchange);
 }

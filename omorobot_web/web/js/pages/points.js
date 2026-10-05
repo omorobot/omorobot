@@ -1,7 +1,7 @@
 // Navigation > 위치 포인트: stop positions and waypoints on a map
 import { api, mapPath, store, LIVE_MAP } from '../api.js';
 import { h, clear, button, toast, formDialog, confirmDialog, field, degrees, radians } from '../ui.js';
-import { RobotMap, MapSelector, pointTypeLabel, pointTypeSelect } from '../components.js';
+import { RobotMap, MapSelector, POINT_KINDS, pointKind, pointKindValues, pointTypeLabel, pointTypeSelect } from '../components.js';
 
 function mount(root) {
   let name = '';
@@ -87,6 +87,17 @@ function mount(root) {
     return points.find((point) => point.start);
   }
 
+  // kind: stop, waypoint or start
+  async function add(values, pose) {
+    const { kind, ...rest } = values;
+    const point = { ...rest, ...pointKindValues(kind), x: pose.x, y: pose.y, yaw: pose.yaw };
+    const before = point.start ? startPoint() : null;
+    await savePoints([...points.map((item) => ({ ...item, start: point.start ? false : item.start })), point]);
+    const added = points.find((item) => item.name === point.name);
+    if (added && added.start && before) toast(`시작 위치를 "${added.name}" (으)로 바꿨습니다. "${before.name}" 은(는) 정지 위치가 됩니다.`);
+    return added;
+  }
+
   function nextName() {
     let index = points.length + 1;
     while (points.some((point) => point.name === `P${index}`)) index += 1;
@@ -102,11 +113,10 @@ function mount(root) {
         map.view.setTool(null);
         const values = await formDialog('포인트 추가', [
           { name: 'name', label: '포인트 이름', value: nextName() },
-          { name: 'type', label: '종류', type: 'select', value: 'stop', options: [['stop', '정지 위치'], ['waypoint', '경유점 (waypoint)']] },
+          { name: 'kind', label: '종류', type: 'select', value: 'stop', options: POINT_KINDS },
         ], { confirm: '추가' });
         if (!values) return;
-        await savePoints([...points, { ...values, x: pose.x, y: pose.y, yaw: pose.yaw }]);
-        const added = points.find((point) => point.name === values.name);
+        const added = await add(values, pose);
         if (added) select(added.id);
       },
     }, '위치를 클릭하고, 누른 채로 끌어서 방향을 지정하세요 (Esc: 취소)');
@@ -117,11 +127,10 @@ function mount(root) {
     if (!localized || !pose) throw new Error('이 맵에서 로봇 위치를 알 수 없습니다. 내비게이션을 시작하세요.');
     const values = await formDialog('현재 로봇 위치 추가', [
       { name: 'name', label: '포인트 이름', value: nextName() },
-      { name: 'type', label: '종류', type: 'select', value: 'stop', options: [['stop', '정지 위치'], ['waypoint', '경유점 (waypoint)']] },
+      { name: 'kind', label: '종류', type: 'select', value: 'stop', options: POINT_KINDS },
     ], { confirm: '추가' });
     if (!values) return;
-    const now = store.state.robot.pose;
-    await savePoints([...points, { ...values, x: now.x, y: now.y, yaw: now.yaw }]);
+    await add(values, store.state.robot.pose);
   }
 
   function repick(point) {
@@ -201,8 +210,7 @@ function mount(root) {
       list.appendChild(h(`div.list-item${point.id === selected ? '.selected' : ''}`, { onclick: () => select(point.id) },
         h(`span.dot.${point.type}`),
         h('div.grow', h('div.title', point.name),
-          point.start ? h('div.sub', '시작 위치 (전원을 켤 때 로봇을 두는 곳)') : null,
-          h('div.sub', `${pointTypeLabel(point.type)} · x ${point.x.toFixed(2)}  y ${point.y.toFixed(2)}  θ ${degrees(point.yaw)}°`),
+          h('div.sub', `${pointTypeLabel(pointKind(point))} · x ${point.x.toFixed(2)}  y ${point.y.toFixed(2)}  θ ${degrees(point.yaw)}°`),
           point.xy_tol || point.yaw_tol ? h('div.sub', `허용 오차 ${toleranceText(point.xy_tol, point.yaw_tol)}`) : null)));
     }
     renderEditor();
@@ -213,7 +221,7 @@ function mount(root) {
     editor.hidden = !point;
     if (!point) return;
     const nameInput = h('input', { type: 'text', value: point.name, maxLength: 40 });
-    const typeSelect = pointTypeSelect(point.type);
+    const typeSelect = pointTypeSelect(pointKind(point));
     const xInput = h('input', { type: 'number', step: 0.01, value: point.x });
     const yInput = h('input', { type: 'number', step: 0.01, value: point.y });
     const yawInput = h('input', { type: 'number', step: 1, value: degrees(point.yaw) });
@@ -230,21 +238,15 @@ function mount(root) {
       value: point.yaw_tol ? degrees(point.yaw_tol) : '',
       placeholder: `기본 ${degrees(limits.yaw)}`,
     });
-    const startInput = h('input', { type: 'checkbox', checked: Boolean(point.start), disabled: point.type !== 'stop' });
-    typeSelect.addEventListener('change', () => {
-      startInput.disabled = typeSelect.value !== 'stop';
-      if (startInput.disabled) startInput.checked = false;
-    });
     const tolerance = (input, toValue) => (input.value.trim() === '' ? null : toValue(Number(input.value)));
     const apply = () => change(point.id, {
       name: nameInput.value.trim(),
-      type: typeSelect.value,
+      ...pointKindValues(typeSelect.value),
       x: Number(xInput.value),
       y: Number(yInput.value),
       yaw: radians(Number(yawInput.value)),
       xy_tol: tolerance(xyTolInput, (value) => value / 100),
       yaw_tol: tolerance(yawTolInput, radians),
-      start: startInput.checked,
     });
     const goButton = button('여기로 이동', { iconName: 'play', onclick: () => goTo(point) });
     goButton.disabled = !(localized && lastState && lastState.nav.ready && lastState.job.state !== 'running');
@@ -256,8 +258,7 @@ function mount(root) {
       h('div.field-row', field('x (m)', xInput), field('y (m)', yInput), field('방향 (°)', yawInput)),
       h('div.field-row', field('위치 허용 오차 (cm)', xyTolInput), field('각도 허용 오차 (°)', yawTolInput)),
       h('p.muted.small-text', `정지 위치에 도착한 것으로 보는 범위입니다. 비워 두면 기본값을 사용합니다. 위치는 ${minXy} cm 이상으로 입력하세요.`),
-      h('label.inline', startInput, h('span', '시작 위치로 지정')),
-      h('p.muted.small-text', '전원을 켠 뒤 내비게이션을 시작하면 로봇이 이 위치에 이 방향으로 놓여 있다고 봅니다. 맵마다 정지 위치 하나만 지정할 수 있습니다.'),
+      h('p.muted.small-text', { hidden: pointKind(point) !== 'start' }, '시작 위치: 전원을 켠 뒤 내비게이션을 시작하면 로봇이 이 위치에 이 방향으로 놓여 있다고 봅니다. 맵마다 하나이며, 정지 위치처럼 이동 목표로도 쓸 수 있습니다.'),
       h('div.inline.wrap',
         button('적용', { kind: 'primary', iconName: 'check', onclick: apply }),
         button('지도에서 다시 지정', { iconName: 'pin', onclick: () => repick(point) }),

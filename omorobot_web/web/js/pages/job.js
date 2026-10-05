@@ -1,7 +1,7 @@
 // Job: program the robot with points, io and flow control, then run it
 import { api, jobPath, mapPath, store } from '../api.js';
 import { h, clear, button, toast, formDialog, confirmDialog, field, select, newId, degrees } from '../ui.js';
-import { RobotMap, IoPanel, LogView, fetchMaps, rememberedMap, pointTypeLabel } from '../components.js';
+import { RobotMap, IoPanel, LogView, fetchMaps, rememberedMap, pointTypeLabel, pointKind } from '../components.js';
 
 const STEP_TYPES = [
   ['move', '이동', 'MOVE', 'k-move', '포인트로 이동'],
@@ -539,7 +539,7 @@ function mount(root) {
   }
 
   function moveEditor(step) {
-    const options = points.map((point) => [point.id, `${point.name} · ${pointTypeLabel(point.type)}`]);
+    const options = points.map((point) => [point.id, `${point.name} · ${pointTypeLabel(pointKind(point))}`]);
     if (!options.length) {
       return h('div.notice', job.map
         ? `맵 "${job.map}" 에 등록된 포인트가 없습니다. Navigation > 위치 포인트 메뉴에서 포인트를 먼저 만드세요.`

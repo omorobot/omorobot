@@ -1,7 +1,7 @@
 // Mapping > 맵 생성: drive the robot and build the map
 import { api, store, LIVE_MAP } from '../api.js';
 import { h, clear, button, toast, formDialog, confirmDialog, field } from '../ui.js';
-import { RobotMap, fetchMaps, rememberMap, pointTypeLabel } from '../components.js';
+import { RobotMap, fetchMaps, rememberMap, pointTypeLabel, pointKind } from '../components.js';
 import { teleop } from '../teleop.js';
 
 function mount(root) {
@@ -69,7 +69,7 @@ function mount(root) {
     for (const point of points) {
       pointList.appendChild(h('div.list-item', { style: 'cursor:default' },
         h(`span.dot.${point.type}`),
-        h('div.grow', h('div.title', point.name), h('div.sub', `${pointTypeLabel(point.type)} · x ${point.x.toFixed(2)}, y ${point.y.toFixed(2)}`)),
+        h('div.grow', h('div.title', point.name), h('div.sub', `${pointTypeLabel(pointKind(point))} · x ${point.x.toFixed(2)}, y ${point.y.toFixed(2)}`)),
         button('', { iconName: 'trash', small: true, title: '삭제', onclick: () => savePoints(points.filter((item) => item.id !== point.id)) })));
     }
   }
