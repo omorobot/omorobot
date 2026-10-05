@@ -226,6 +226,18 @@ class Orchestrator:
                 self.bridge.reset_nav_ready()
             self.nav_map = None
 
+    def end_navigation(self):
+        """Stop button of the navigation. The bringup stops too: the pose is not remembered, the robot
+        may be carried to the start position before the next navigation starts."""
+        with self._lock:
+            self._halt()
+            self.stop_navigation()
+            if self.mode() != 'mapping' and self.processes['bringup'].stop():
+                # a start right after this must not take the old odometry for a running bringup
+                deadline = time.monotonic() + 3.0
+                while self.bridge.odom_alive() and time.monotonic() < deadline:
+                    time.sleep(0.1)
+
     def ensure_navigation(self, map_name, should_abort=lambda: False):
         """Block until navigation with the map accepts goals (used by jobs)."""
         with self._lock:

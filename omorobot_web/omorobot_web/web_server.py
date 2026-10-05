@@ -240,7 +240,7 @@ def create_app(bridge, orchestrator, runner, maps, jobs, settings, web_dir):
 
     @app.route('/api/nav/stop', methods=['POST'])
     def nav_stop():
-        orchestrator.stop_navigation()
+        orchestrator.end_navigation()
         return ok()
 
     @app.route('/api/nav/initial_pose', methods=['POST'])

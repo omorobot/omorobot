@@ -23,7 +23,7 @@ function mount(root) {
   const navBadge = h('span.badge', '정지');
   const navText = h('p.muted.small-text');
   const navStart = button('이 맵으로 내비게이션 시작', { kind: 'primary', iconName: 'play', onclick: startNavigation });
-  const navStop = button('내비게이션 종료', { iconName: 'stop', onclick: () => api.post('/api/nav/stop').then(() => store.refresh()) });
+  const navStop = button('내비게이션 종료', { iconName: 'stop', title: '내비게이션과 로봇 연결(bringup)을 함께 종료합니다', onclick: stopNavigation });
   const initialButton = button('초기 위치 설정', { iconName: 'flag', onclick: pickInitialPose });
   const startPoseButton = button('시작 위치로 맞춤', { iconName: 'locate', onclick: resetToStart });
   const cancelButton = button('이동 취소', { iconName: 'close', onclick: () => api.post('/api/nav/cancel') });
@@ -156,6 +156,13 @@ function mount(root) {
     await store.refresh();
   }
 
+  // the bringup stops too, the next navigation does not start at a remembered pose
+  async function stopNavigation() {
+    await api.post('/api/nav/stop');
+    toast('내비게이션과 로봇 연결(bringup)을 종료했습니다.', 'ok');
+    await store.refresh();
+  }
+
   function pickInitialPose() {
     map.view.setTool({
       type: 'pose',
@@ -283,7 +290,7 @@ function mount(root) {
     const external = state.processes.navigation.external;
     let badge = ['정지', ''];
     const start = startPoint();
-    let text = `포인트로 이동하거나 Job을 실행하려면 내비게이션을 시작하세요. 로봇은 마지막으로 알려진 위치, 모르면 ${start ? `시작 위치 "${start.name}"` : '맵의 원점(매핑 시작 위치)'} 에 있다고 가정합니다.`;
+    let text = `포인트로 이동하거나 Job을 실행하려면 내비게이션을 시작하세요. 로봇 위치를 모르면 ${start ? `시작 위치 "${start.name}"` : '맵의 원점(매핑 시작 위치)'} 에 있다고 가정합니다. 내비게이션을 종료하면 로봇 연결(bringup)도 함께 종료됩니다.`;
     if (live) {
       text = '매핑 중에는 포인트 등록만 가능합니다. 맵을 저장한 뒤 내비게이션을 시작하세요.';
     } else if (state.processes.navigation.alert && mine) {
